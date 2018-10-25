@@ -20,7 +20,7 @@ from fairseq.sequence_generator import SequenceGenerator
 
 
 Batch = namedtuple('Batch', 'srcs tokens lengths')
-Translation = namedtuple('Translation', 'src_str hypos pos_scores alignments')
+Translation = namedtuple('Translation', 'src_str hypos pos_scores alignments topwords')
 
 
 def buffered_read(buffer_size):
@@ -96,7 +96,7 @@ def main(args):
         stop_early=(not args.no_early_stop), normalize_scores=(not args.unnormalized),
         len_penalty=args.lenpen, unk_penalty=args.unkpen,
         sampling=args.sampling, sampling_topk=args.sampling_topk, sampling_temperature=args.sampling_temperature,
-        diverse_beam_groups=args.diverse_beam_groups, diverse_beam_strength=args.diverse_beam_strength,
+        diverse_beam_groups=args.diverse_beam_groups, diverse_beam_strength=args.diverse_beam_strength, threshold=args.threshold
     )
 
     if use_cuda:
@@ -106,12 +106,13 @@ def main(args):
     # (None if no unknown word replacement, empty if no path to align dictionary)
     align_dict = utils.load_align_dict(args.replace_unk)
 
-    def make_result(src_str, hypos):
+    def make_result(src_str, hypos, topwords):
         result = Translation(
             src_str='O\t{}'.format(src_str),
             hypos=[],
             pos_scores=[],
             alignments=[],
+            topwords=[],
         )
 
         # Process top predictions
@@ -124,7 +125,8 @@ def main(args):
                 tgt_dict=tgt_dict,
                 remove_bpe=args.remove_bpe,
             )
-            result.hypos.append('H\t{}\t{}'.format(hypo['score'], hypo_str))
+            #result.hypos.append('H\t{}\t{}'.format(hypo['score'], hypo_str))
+            result.hypos.append('H\t{}'.format(hypo_str))
             result.pos_scores.append('P\t{}'.format(
                 ' '.join(map(
                     lambda x: '{:.4f}'.format(x),
@@ -135,6 +137,7 @@ def main(args):
                 'A\t{}'.format(' '.join(map(lambda x: str(utils.item(x)), alignment)))
                 if args.print_alignment else None
             )
+            result.topwords.append('W\t{}'.format(" ".join([tgt_dict.string(topwords[i]) for i in range(len(hypo)-1)])))
         return result
 
     def process_batch(batch):
@@ -146,12 +149,17 @@ def main(args):
             lengths = lengths.cuda()
 
         encoder_input = {'src_tokens': tokens, 'src_lengths': lengths}
-        translations = translator.generate(
+        translations, topwords = translator.generate(
             encoder_input,
             maxlen=int(args.max_len_a * tokens.size(1) + args.max_len_b),
         )
 
-        return [make_result(batch.srcs[i], t) for i, t in enumerate(translations)]
+        return [
+            make_result(
+                batch.srcs[i], 
+                t, 
+                [step.get(i, []) for step in topwords]
+            ) for i, t in enumerate(translations)]
 
     max_positions = utils.resolve_max_positions(
         task.max_positions(),
@@ -162,6 +170,10 @@ def main(args):
         print('| Sentence buffer size:', args.buffer_size)
     print('| Type the input sentence and press return:')
     for inputs in buffered_read(args.buffer_size):
+    #lines = sys.stdin.readlines()
+    #sys.stdin = open('/dev/tty')
+    #for inputs in lines:
+    #    inputs = inputs.strip()
         indices = []
         results = []
         for batch, batch_indices in make_batches(inputs, args, task, max_positions):
@@ -171,9 +183,11 @@ def main(args):
         for i in np.argsort(indices):
             result = results[i]
             print(result.src_str)
-            for hypo, pos_scores, align in zip(result.hypos, result.pos_scores, result.alignments):
+            for hypo, pos_scores, align, topwords in zip(result.hypos, result.pos_scores, result.alignments, result.topwords):
                 print(hypo)
                 print(pos_scores)
+                if args.threshold > 0:
+                    print(topwords)               
                 if align is not None:
                     print(align)
 

@@ -18,7 +18,7 @@ class SequenceGenerator(object):
         self, models, tgt_dict, beam_size=1, minlen=1, maxlen=None, stop_early=True,
         normalize_scores=True, len_penalty=1, unk_penalty=0, retain_dropout=False,
         sampling=False, sampling_topk=-1, sampling_temperature=1,
-        diverse_beam_groups=-1, diverse_beam_strength=0.5,
+        diverse_beam_groups=-1, diverse_beam_strength=0.5, threshold=0
     ):
         """Generates translations of a given source sentence.
         Args:
@@ -44,6 +44,9 @@ class SequenceGenerator(object):
         self.len_penalty = len_penalty
         self.unk_penalty = unk_penalty
         self.retain_dropout = retain_dropout
+        # threshold to choose top words
+        self.threshold = threshold
+
 
         assert sampling_topk < 0 or sampling, '--sampling-topk requires --sampling'
 
@@ -284,6 +287,10 @@ class SequenceGenerator(object):
 
         reorder_state = None
         batch_idxs = None
+        
+        # topk words recorder
+        topwords_recoder = []
+
         for step in range(maxlen + 1):  # one extra step for EOS marker
             # reorder decoder internal states based on the prev choice of beams
             if reorder_state is not None:
@@ -300,6 +307,25 @@ class SequenceGenerator(object):
 
             lprobs[:, self.pad] = -math.inf  # never select pad
             lprobs[:, self.unk] -= self.unk_penalty  # apply unk penalty
+
+            
+            current_topwords_indices = {}
+            if self.threshold > 0:
+                # words log probs for first hypothesis
+                all_words_lprobs = lprobs.view(bsz, -1, self.vocab_size)[:, 0, :] 
+                current_topwords_indices_mask = torch.exp(all_words_lprobs) > self.threshold
+
+                if batch_idxs is None:
+                    for batch_idx in range(all_words_lprobs.size(0)):
+                        one_topwords_indices = [idx for idx, value in enumerate(current_topwords_indices_mask[batch_idx]) if value.long() == 1] 
+                        current_topwords_indices[batch_idx] = one_topwords_indices
+                else:
+                    for real_idx, batch_idx in enumerate(batch_idxs):
+                        one_topwords_indices = [idx for idx, value in enumerate(current_topwords_indices_mask[real_idx]) if value.long() == 1] 
+                        current_topwords_indices[batch_idx] = one_topwords_indices
+
+
+            topwords_recoder.append(current_topwords_indices)
 
             # Record attention scores
             if avg_attn_scores is not None:
@@ -474,7 +500,7 @@ class SequenceGenerator(object):
         for sent in range(len(finalized)):
             finalized[sent] = sorted(finalized[sent], key=lambda r: r['score'], reverse=True)
 
-        return finalized
+        return finalized, topwords_recoder
 
     def _decode(self, tokens, encoder_outs, incremental_states):
         if len(self.models) == 1:
