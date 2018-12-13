@@ -332,6 +332,8 @@ def add_generation_args(parser):
                        help='a dictionary used to override model args at generation that were used during model training')
     group.add_argument('--threshold', default=0.0, type=float,
                        help='threshold to choose words')
+    group.add_argument('--topk', default=1, type=int,
+                       help='record top k word each step')
     return group
 
 

@@ -96,7 +96,8 @@ def main(args):
         stop_early=(not args.no_early_stop), normalize_scores=(not args.unnormalized),
         len_penalty=args.lenpen, unk_penalty=args.unkpen,
         sampling=args.sampling, sampling_topk=args.sampling_topk, sampling_temperature=args.sampling_temperature,
-        diverse_beam_groups=args.diverse_beam_groups, diverse_beam_strength=args.diverse_beam_strength, threshold=args.threshold
+        diverse_beam_groups=args.diverse_beam_groups, diverse_beam_strength=args.diverse_beam_strength,
+        threshold=args.threshold, topk=args.topk
     )
 
     if use_cuda:
@@ -137,7 +138,7 @@ def main(args):
                 'A\t{}'.format(' '.join(map(lambda x: str(utils.item(x)), alignment)))
                 if args.print_alignment else None
             )
-            result.topwords.append('W\t{}'.format(" ".join([tgt_dict.string(topwords[i]) for i in range(len(hypo)-1)])))
+            result.topwords.append('W\t{}'.format(" ".join([tgt_dict.string(topwords[i]) for i in range(len(hypo["tokens"]))])))
         return result
 
     def process_batch(batch):
@@ -186,7 +187,7 @@ def main(args):
             for hypo, pos_scores, align, topwords in zip(result.hypos, result.pos_scores, result.alignments, result.topwords):
                 print(hypo)
                 print(pos_scores)
-                if args.threshold > 0:
+                if args.threshold > 0 or args.topk > 1:
                     print(topwords)               
                 if align is not None:
                     print(align)
